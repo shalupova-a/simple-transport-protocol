@@ -11,88 +11,111 @@ MSG_SIZE = 1500
 DATA_SIZE = 1000
 TIMEOUT = 30
 
-seqn = 0
+
 sent = []
+seen = []
+
 
 def log(string):
-  sys.stderr.write(datetime.datetime.now().strftime("%H:%M:%S.%f") + " " + string + "\n")
-  sys.stderr.flush()
+    sys.stderr = open('log.txt', 'w')
+    sys.stderr.write(datetime.datetime.now().strftime("%H:%M:%S.%f") + " " + string + "\n")
+    sys.stderr.close()
 
-def send_next_packet():
-  global seqn
-  global sent
 
-  data = sys.stdin.read(DATA_SIZE)
-  if (len(data) > 0):
-    msg = {"sequence": seqn, "data": data, "ack": False, "eof": False}
-    seqn += len(data)
-
-    sent.append(msg)
-
-    msg = json.dumps(msg)
-    if sock.sendto(msg.encode('ascii'), dest) < len(msg):
+def send_next_packet(msg):
+    if sock.sendto(json.dumps(msg).encode('ascii'), dest) < len(msg):
       log("[error] unable to fully send packet")
     else:
       log("[send data] " + str(seqn) + " (" + str(len(data)) + ")")
-    return True
-  else:
-    return False
- 
+
+
 def send_whole():
-  global sent
-  global seqn
+    global sent
+    
+    #sent = []
+    #seqn = 0
+    count = 0
+    for i in range (0, len(sent)):
+        if count > 5:
+            break
+        send_next_packet(sent[i])
+        count+=1
 
-  sent = []
-  seqn = 0
 
-  while send_next_packet():
-    pass
+    #msg = {"eof": True, "data": "", "sequence": seqn, "ack": False}
+    #sent.append(msg)
+    #sock.sendto(json.dumps(msg).encode('ascii'), dest)
 
-  msg = {"eof": True, "data": "", "sequence": seqn, "ack": False}
-  sent.append(msg)
-  sock.sendto(json.dumps(msg).encode('ascii'), dest)
 
 # Bind to localhost and an ephemeral port
 ip_port = sys.argv[1]
 udp_ip = ip_port[0:ip_port.find(":")]
-udp_port = int(ip_port[ip_port.find(":")+1:])
+udp_port = int(ip_port[ip_port.find(":") + 1:])
 dest = (udp_ip, udp_port)
 seqn = 0
 
 # Set up the socket
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock.settimeout(TIMEOUT)
+"""
+data = sys.stdin.read(DATA_SIZE)
+while len(data) > 0:
+    msg = {"sequence": seqn, "data": data, "ack": False, "eof": False}
+    seqn += len(data)
+    sent.append(json.dumps(msg))
+    log("READ PACKET: " + str(msg['sequence']))
+    data = sys.stdin.read(DATA_SIZE)
 
 send_whole()
-
+"""
 temp_ack = 0
 
 while True:
-  log("ABOUT TO SLEEP")
-  result = sock.recvfrom(MSG_SIZE)
+    data = sys.stdin.read(DATA_SIZE)
+    while len(data) > 0:
+        msg = {"sequence": seqn, "data": data, "ack": False, "eof": False}
+        if msg not in seen:
+            seqn += len(data)
+            sent.append(msg)
+            seen.append(msg)
+            log("READ PACKET: " + str(msg['sequence']))
+        data = sys.stdin.read(DATA_SIZE)
 
-  if result:
-    (data, addr) = result
-    try:
-      decoded = json.loads(data)
-      if decoded['ack'] - 1 == sent[-1]['ack']:
-        break
-      elif decoded['ack'] == temp_ack:
-        log("[recv ack] " + str(temp_ack))
-        cur_msg = sent[sent.index([m for m in sent if m['sequence'] + len(m['data']) == temp_ack][0]) + 1]
-        if sock.sendto(cur_msg.encode('ascii'), dest) < len(cur_msg):
-          log("[error] unable to fully send packet")
-        else:
-          log("[send data] " + str(temp_ack) + " (" + str(len(data)) + ")")
-
-      temp_ack = decoded['ack']
-
-    except (ValueError, KeyError, TypeError) as e:
-      log("[recv corrupt packet]")
-      raise e
-  else:
-    log("[error] timeout")
     send_whole()
+    log("ABOUT TO SLEEP")
+    result = sock.recvfrom(MSG_SIZE)
+    # Now we listen for ACKS
+    if result:
+        (data, addr) = result
+        try:
+            decoded = json.loads(data)
+            # Receiver received packet
+            log("ACK from recv: " + str(decoded))
+            if int(decoded['ack']) - 1 == int(sent[-1]['sequence']):
+                #remove packet from sent list
+                log("remove packet from sent list")
+                sent.remove(sent[-1])
+                break
+            # ???
+            elif decoded['ack'] == temp_ack:
+                log("[recv ack] " + str(temp_ack))
+                cur_msg = [m for m in sent if m['sequence'] + len(m['data']) == temp_ack] 
+                if sock.sendto(json.dumps(cur_msg).encode('ascii'), dest) < len(cur_msg):
+                    log("[error] unable to fully send packet")
+                else:
+                    log("[send data] " + str(temp_ack) + " (" + str(len(data)) + ")")
 
+            temp_ack = decoded['ack']
+          
+        except (ValueError, KeyError, TypeError) as e:
+            log("[recv corrupt packet]")
+            raise e
+        break
+    else:
+        log("[error] timeout")
+        
+        send_whole()
+
+log("send eof")
 sock.sendto(json.dumps({"eof": True, "data": "", "sequence": seqn, "ack": False}).encode('ascii'), dest)
 sys.exit(0)

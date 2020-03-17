@@ -8,7 +8,6 @@ import select
 import json
 
 
-
 def print_whole(received):
   s = 0
   while True:
@@ -21,8 +20,9 @@ def print_whole(received):
       s += len(m['data'])
 
 def log(string):
+  sys.stderr = open('log.txt', 'w')
   sys.stderr.write(datetime.datetime.now().strftime("%H:%M:%S.%f") + " " + string + "\n")
-  sys.stderr.flush()
+  sys.stderr.close()
 
 MSG_SIZE = 1500
 TIMEOUT = 30
@@ -54,14 +54,14 @@ while True:
 
     try:
       decoded = json.loads(data)
-
+      #log("RECEIVED PACKET: " decoded)
       # If the EOF flag is set, exit
-      if (decoded['eof']):
+      if decoded['eof']:
         received[decoded['sequence']] = decoded
         log("[eof] " + str(decoded['sequence']) + " (" + str(len(decoded['data'])) + ")" )
 
       # If there is data, we accept it and print it out
-      if (decoded['data']):
+      if decoded['data']:
         received[decoded['sequence']] = decoded
         log("[recv data] " + str(decoded['sequence']) + " (" + str(len(decoded['data'])) + ") ACCEPTED")
 
@@ -84,14 +84,14 @@ while True:
         else:
           s += len(m['data'])
 
-      l = len(cur_msg['data']) 
+      l = len(cur_msg['data'])
 
       msg = json.dumps({"ack": cur_msg['sequence'] + l})
       log("ABOUT TO SEND " + msg)
       if sock.sendto(msg.encode('ascii'), addr) < len(msg):
         log("[error] unable to fully send packet")
       if e:
-        for i in range(0,10):
+        for i in range(0,5):
           if sock.sendto(msg.encode('ascii'), addr) < len(msg):
             log("[error] unable to fully send packet")
           time.sleep(0.1)
